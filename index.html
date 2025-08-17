@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Basketball Shooting App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <style>
+    body { font-family: Arial, sans-serif; background: #f6f6f6; margin: 0; }
+    .container { max-width: 500px; margin: 30px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 24px; }
+    h1 { text-align: center; }
+    .menu, .sessions-list, .recap-filters { display: flex; flex-direction: column; gap: 12px; margin: 24px 0; }
+    .menu button, .sessions-list button, .recap-filters button { padding: 14px; font-size: 1.1em; border-radius: 6px; border: 1px solid #ccc; background: #eee; cursor: pointer; transition: background 0.2s; }
+    .menu button:hover, .sessions-list button:hover, .recap-filters button:hover { background: #ddd; }
+    .back-btn { margin-bottom: 8px; color: #3377cc; cursor: pointer; background: none; border: none; font-size: 1em; }
+    .court-wrapper { display: flex; flex-direction: column; align-items: center; }
+    .court-svg { background: #e3c98c; border-radius: 10px; box-shadow: 0 2px 8px #0001; touch-action: none; }
+    .spot { cursor: pointer; }
+    .spot-label { font-weight: bold; fill: #333; }
+    .overlay { position: fixed; left: 0; top: 0; right:0; bottom:0; background: rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; }
+    .input-box { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 4px 16px #0002; min-width: 230px; }
+    .input-box label { display: block; margin-bottom: 8px; }
+    .input-box input { width: 80px; padding: 8px; font-size: 1.1em; margin-bottom: 14px; }
+    .input-box button { padding: 10px 16px; font-size: 1em; border-radius: 5px; border: 1px solid #888; background: #eee; }
+    .input-box button:hover { background: #ddd; }
+    .percent-label { font-size: 1.1em; font-weight: bold; fill: #006600; }
+    .sessions-list { max-height: 220px; overflow-y: auto; }
+    .recap-info { margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="container" id="app"></div>
+  <script>
+    // --- Data ---
+    // Added new spots here
+    const SPOTS = [
+      { key: "freethrow", label: "FT" },
+      { key: "topkey", label: "Top" },
+      { key: "rightangle", label: "3RA" },
+      { key: "leftangle", label: "3LA" },
+      { key: "rightelbow", label: "3RE" },
+      { key: "leftelbow", label: "3LE" },
+      { key: "midrange_left", label: "MRL" },
+      { key: "midrange_right", label: "MRR" },
+      { key: "under_up", label: "UP" },
+      { key: "under_left", label: "UL" },
+      { key: "under_right", label: "UR" }
+    ];
+
+    function ensureCourtSpotsData() {
+      if (!window.courtSpotsData) {
+        window.courtSpotsData = {};
+        for (const spot of SPOTS) window.courtSpotsData[spot.key] = { made: 0, attempted: 0 };
+      }
+    }
+    ensureCourtSpotsData();
+
+    function getSessions() {
+      return JSON.parse(localStorage.getItem('shooting_sessions') || '[]');
+    }
+    function saveSession(session) {
+      const sessions = getSessions();
+      sessions.push(session);
+      localStorage.setItem('shooting_sessions', JSON.stringify(sessions));
+    }
+    function formatDate(date) {
+      return date.toLocaleDateString('en-GB').replace(/\//g, '/');
+    }
+    function isSameMonth(d1, d2) {
+      return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth();
+    }
+    function isSameDay(d1, d2) {
+      return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
+    }
+    function getRecapSessions(filter) {
+      const all = getSessions();
+      const now = new Date();
+      if (filter === "week") {
+        const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+        return all.filter(s => new Date(s.date) >= weekAgo);
+      }
+      if (filter === "month") {
+        return all.filter(s => isSameMonth(new Date(s.date), now));
+      }
+      return all;
+    }
+
+    // --- App State ---
+    let state = { view: 'menu', selectedSession: null, recapFilter: null };
+
+    // --- UI Rendering ---
+    function render() {
+      ensureCourtSpotsData();
+      const app = document.getElementById('app');
+      app.innerHTML = '';
+      if (state.view === 'menu') return renderMenu(app);
+      if (state.view === 'old_sessions') return renderOldSessions(app);
+      if (state.view === 'new_session') return renderCourt(app, { mode: 'new' });
+      if (state.view === 'recap') return renderRecap(app);
+      if (state.view === 'court_session') return renderCourt(app, { mode: 'view', session: state.selectedSession });
+    }
+    function renderMenu(app) {
+      app.innerHTML = `<h1>🏀 Basketball App</h1>
+        <div class="menu">
+          <button onclick="setView('old_sessions')">Old Sessions</button>
+          <button onclick="setView('new_session')">New Session</button>
+          <button onclick="setView('recap')">Recaps</button>
+        </div>`;
+    }
+    function renderOldSessions(app) {
+      app.innerHTML = `<button class="back-btn" onclick="setView('menu')">← Back</button>
+        <h2>Old Sessions</h2>
+        <div class="sessions-list"></div>`;
+      const list = app.querySelector('.sessions-list');
+      const sessions = getSessions();
+      if (sessions.length === 0) {
+        list.innerHTML = "<i>No sessions yet.</i>";
+        return;
+      }
+      sessions.sort((a, b) => new Date(b.date) - new Date(a.date));
+      sessions.forEach((s, i) => {
+        const label = `${formatDate(new Date(s.date))}`;
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.onclick = () => { state.selectedSession = s; state.view = 'court_session'; render(); };
+        list.appendChild(btn);
+      });
+    }
+    function renderCourt(app, { mode, session }) {
+      ensureCourtSpotsData();
+      const isRecap = mode === 'view';
+      app.innerHTML = `<button class="back-btn" onclick="setView('${isRecap ? 'old_sessions' : 'menu'}')">← Back</button>
+        <h2>${isRecap ? 'Session' : 'New Session'}</h2>
+        <div class="court-wrapper">
+          ${courtSVG(isRecap, session)}
+        </div>`;
+      if (!isRecap && !session) {
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = "Save Session";
+        saveBtn.style.marginTop = "20px";
+        saveBtn.onclick = () => {
+          let hasAttempt = false;
+          for (const spot of SPOTS) {
+            if (window.courtSpotsData[spot.key] && window.courtSpotsData[spot.key].attempted > 0) {
+              hasAttempt = true; break;
+            }
+          }
+          if (!hasAttempt) {
+            alert("Enter at least one attempt at any spot.");
+            return;
+          }
+          saveSession({ 
+            date: new Date().toISOString(), 
+            spots: JSON.parse(JSON.stringify(window.courtSpotsData)) 
+          });
+          setView('menu');
+        };
+        app.querySelector('.court-wrapper').appendChild(saveBtn);
+      }
+    }
+    function renderRecap(app) {
+      ensureCourtSpotsData();
+      app.innerHTML = `<button class="back-btn" onclick="setView('menu')">← Back</button>
+        <h2>Recaps</h2>
+        <div class="recap-filters">
+          <button onclick="state.recapFilter='week';render()">Past Week</button>
+          <button onclick="state.recapFilter='month';render()">This Month</button>
+        </div>
+        <div class="court-wrapper"></div>
+        <div class="recap-info"></div>
+      `;
+      if (!state.recapFilter) return;
+      const sessions = getRecapSessions(state.recapFilter);
+      // Aggregate stats for each spot
+      let aggregate = {};
+      for (const spot of SPOTS) aggregate[spot.key] = { made: 0, attempted: 0 };
+      sessions.forEach(s => {
+        if (s.spots) {
+          for (const spot of SPOTS) {
+            if (s.spots[spot.key]) {
+              aggregate[spot.key].made += s.spots[spot.key].made;
+              aggregate[spot.key].attempted += s.spots[spot.key].attempted;
+            }
+          }
+        }
+      });
+      // Draw court with aggregate stats
+      document.querySelector('.court-wrapper').innerHTML = courtSVG(true, { spots: aggregate });
+      let info = "";
+      let totalSessions = sessions.length;
+      let totalShots = 0, totalMade = 0;
+      for (const spot of SPOTS) {
+        totalShots += aggregate[spot.key].attempted;
+        totalMade += aggregate[spot.key].made;
+      }
+      if (sessions.length === 0) {
+        info = "<i>No sessions found for selected period.</i>";
+      } else {
+        info = `<b>Sessions:</b> ${totalSessions} &nbsp; <b>Total:</b> ${totalMade}/${totalShots} &nbsp; <b>Percent:</b> ${totalShots ? ((totalMade/totalShots*100).toFixed(1)+'%') : 'N/A'}<br>`;
+        // spot breakdown
+        info += SPOTS.map(spot => {
+          const a = aggregate[spot.key];
+          return `${spot.label}: ${a.made}/${a.attempted} (${a.attempted ? Math.round(a.made/a.attempted*100)+'%' : 'N/A'})`;
+        }).join(' &nbsp; ');
+      }
+      document.querySelector('.recap-info').innerHTML = info;
+    }
+
+    // --- Court Drawing ---
+    function courtSVG(isReadOnly, session) {
+      ensureCourtSpotsData();
+      // Standard NBA halfcourt: 50ft wide, 47ft long. We'll use 500x470 px, basket at 4ft from baseline.
+      const W = 500, H = 470;
+      const lineColor = "#b89e63";
+      const paintW = 160, paintH = 190;
+      const basketX = W/2, basketY = 35;
+      const backboardW = 60, backboardH = 5;
+      const rimR = 9, rimY = basketY + 7;
+      // FT semicircle
+      const ftCircleR = 60;
+      const paintBottomY = basketY + paintH;
+      const ftSemiCircleCx = basketX;
+      const ftSemiCircleCy = paintBottomY;
+      const ftSpotY = paintBottomY + ftCircleR/2;
+
+      // 3pt arc geometry
+      const tpArcR = 289;
+      const sidelineOffset = 15;
+      const tpSideX1 = 20 + sidelineOffset, tpSideX2 = W - 20 - sidelineOffset;
+      const arcY =
+        rimY +
+        Math.sqrt(tpArcR ** 2 - (tpSideX1 - basketX) ** 2);
+
+      // --- Spot positions (edit these to adjust placement!) ---
+      const spotPositions = {
+        freethrow:    { x: ftSemiCircleCx, y: ftSpotY },
+        topkey:       { x: basketX, y: arcY + 120 },
+        rightangle:   { x: tpSideX2, y: arcY - 100 },
+        leftangle:    { x: tpSideX1, y: arcY - 100 },
+        rightelbow:   { x: basketX + 165, y: arcY + 65 },
+        leftelbow:    { x: basketX - 165, y: arcY + 65 },
+        // New spots:
+        midrange_left:  { x: basketX - 120, y: (ftSpotY + arcY) / 2 - 40 },   // adjust manually as desired
+        midrange_right: { x: basketX + 120, y: (ftSpotY + arcY) / 2 - 40 },   // adjust manually as desired
+        under_up:    { x: basketX, y: rimY + 75 },
+        under_left:  { x: basketX - 45, y: rimY + 65 },
+        under_right: { x: basketX + 45, y: rimY + 65 }
+      };
+
+      // Data for this court's spots
+      let spotData = {};
+      for (const spot of SPOTS) {
+        spotData[spot.key] = (session && session.spots && session.spots[spot.key])
+          ? session.spots[spot.key]
+          : (window.courtSpotsData[spot.key] || { made: 0, attempted: 0 });
+      }
+
+      // Draw SVG
+      return `
+<svg width="${W}" height="${H}" class="court-svg" viewBox="0 0 ${W} ${H}">
+  <!-- Outer boundary (halfcourt) -->
+  <rect x="20" y="20" width="${W-40}" height="${H-40}" fill="#fbeec1" stroke="${lineColor}" stroke-width="4"/>
+  <!-- Backboard -->
+  <rect x="${basketX-backboardW/2}" y="${basketY}" width="${backboardW}" height="${backboardH}" fill="#ccc" stroke="#444" stroke-width="2"/>
+  <!-- Rim -->
+  <circle cx="${basketX}" cy="${rimY}" r="9" fill="none" stroke="#c1440e" stroke-width="4"/>
+  <!-- Paint (key) -->
+  <rect x="${basketX-paintW/2}" y="${basketY}" width="${paintW}" height="${paintH}" fill="none" stroke="${lineColor}" stroke-width="3"/>
+  <!-- Free throw semicircle at bottom of the paint, facing down -->
+  <path d="M${ftSemiCircleCx-ftCircleR},${paintBottomY}
+           A${ftCircleR},${ftCircleR} 0 0,0 ${ftSemiCircleCx+ftCircleR},${paintBottomY}"
+        fill="none" stroke="${lineColor}" stroke-width="3"/>
+  <!-- 3-point arc (flipped to top) -->
+  <path d="
+    M${tpSideX1},${arcY}
+    A${tpArcR},${tpArcR} 0 0,0 ${tpSideX2},${arcY}
+  " fill="none" stroke="${lineColor}" stroke-width="3"/>
+  <!-- 3-point sidelines (now at the top, just outside the arc, running upward) -->
+  <line x1="${tpSideX1}" y1="${arcY}" x2="${tpSideX1}" y2="${basketY+5}" stroke="${lineColor}" stroke-width="3"/>
+  <line x1="${tpSideX2}" y1="${arcY}" x2="${tpSideX2}" y2="${basketY+5}" stroke="${lineColor}" stroke-width="3"/>
+  <!-- Halfcourt line (bottom of SVG) -->
+  <line x1="20" y1="${H-20}" x2="${W-20}" y2="${H-20}" stroke="${lineColor}" stroke-width="4"/>
+  <!-- Spots -->
+  ${SPOTS.map(spot=>{
+    const p = spotPositions[spot.key];
+    const d = spotData[spot.key];
+    const percent = d.attempted > 0 ? Math.round(d.made/d.attempted*100) : null;
+    return `
+      <g class="spot" id="${spot.key}-spot" style="cursor:${isReadOnly?'default':'pointer'}"
+          onclick="${isReadOnly ? '' : `showInputBox(event, '${spot.key}')`}"
+          data-spot="${spot.key}">
+        <circle cx="${p.x}" cy="${p.y}" r="14" fill="#fff" stroke="#2596be" stroke-width="3"/>
+        <text x="${p.x}" y="${p.y+5}" text-anchor="middle" class="spot-label" font-size="13">${spot.label}</text>
+        ${percent !== null ? `<text x="${p.x}" y="${p.y+35}" text-anchor="middle" class="percent-label" font-size="15">${percent}%</text>` : ''}
+      </g>
+    `;
+  }).join('')}
+</svg>
+      `;
+    }
+
+    // --- Spot Input Box ---
+    function showInputBox(e, spotKey) {
+      if (!e || !spotKey) return;
+      if (state.view !== 'new_session') return;
+      const spot = SPOTS.find(s => s.key === spotKey);
+      let overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.onclick = function(ev) { if(ev.target===overlay)overlay.remove(); };
+      const d = window.courtSpotsData[spotKey] || { made: 0, attempted: 0 };
+      overlay.innerHTML = `
+        <div class="input-box" onclick="event.stopPropagation()">
+          <label>${spot.label} Shots <b>Made</b>:</label>
+          <input id="spot-made" type="number" min="0" max="99" value="${d.made || ''}">
+          <label>${spot.label} Shots <b>Attempted</b>:</label>
+          <input id="spot-attempted" type="number" min="0" max="99" value="${d.attempted || ''}">
+          <div style="margin-top:10px;display:flex;gap:10px">
+            <button onclick="submitInputBox('${spotKey}')">OK</button>
+            <button onclick="closeInputBox()">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      document.getElementById('spot-made').focus();
+    }
+    function submitInputBox(spotKey) {
+      let made = parseInt(document.getElementById('spot-made').value)||0;
+      let attempted = parseInt(document.getElementById('spot-attempted').value)||0;
+      if (made > attempted) { alert("Made shots can't exceed attempted."); return; }
+      window.courtSpotsData[spotKey] = { made, attempted };
+      closeInputBox();
+      render();
+    }
+    function closeInputBox() {
+      let overlay = document.querySelector('.overlay');
+      if(overlay) overlay.remove();
+    }
+    // --- Navigation ---
+    function setView(v) {
+      state.view = v;
+      if (v === 'new_session') {
+        window.courtSpotsData = {};
+        for (const spot of SPOTS) window.courtSpotsData[spot.key] = { made: 0, attempted: 0 };
+      }
+      state.selectedSession = null;
+      state.recapFilter = null;
+      render();
+    }
+    window.setView = setView;
+    window.showInputBox = showInputBox;
+    window.submitInputBox = submitInputBox;
+    window.closeInputBox = closeInputBox;
+
+    // --- Initial Render ---
+    render();
+  </script>
+</body>
+</html>
